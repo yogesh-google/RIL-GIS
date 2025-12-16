@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RetailVista Chatbot POC</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f4f9;
+      display: flex;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    .chat-container {
+      width: 600px;
+      background: white;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+
+    .chat-header {
+      background: #007bff;
+      color: white;
+      padding: 15px;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message {
+      padding: 10px 15px;
+      border-radius: 20px;
+      max-width: 80%;
+      word-wrap: break-word;
+    }
+
+    .user-message {
+      background: #e3f2fd;
+      align-self: flex-end;
+      color: #333;
+    }
+
+    .bot-message {
+      background: #f1f0f0;
+      align-self: flex-start;
+      color: #333;
+    }
+
+    .input-area {
+      display: flex;
+      padding: 10px;
+      background: #fafafa;
+      border-top: 1px solid #ddd;
+    }
+
+    .input-area input {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 20px;
+      outline: none;
+    }
+
+    .input-area button {
+      margin-left: 10px;
+      padding: 10px 20px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+    }
+
+    .input-area button:hover {
+      background: #0056b3;
+    }
+
+    .loading {
+      font-style: italic;
+      color: #888;
+      font-size: 0.9em;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="chat-container">
+    <div class="chat-header">RetailVista Assistant</div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="message bot-message">Hello! Ask me about location stats (e.g., "Show India stats") or retail assets
+        (e.g., "Show map of Maharashtra").</div>
+    </div>
+    <div class="input-area">
+      <input type="text" id="userInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+      <button onclick="handleSendMessage()">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const AGENT_URL = "http://localhost:8000/chat";
+    const BACKEND_URL = "http://localhost:8001";
+
+    function handleKeyPress(event) {
+      if (event.key === 'Enter') {
+        handleSendMessage();
+      }
+    }
+
+    async function handleSendMessage() {
+      const input = document.getElementById("userInput");
+      const message = input.value.trim();
+      if (!message) return;
+
+      addMessage(message, "user");
+      input.value = "";
+
+      // Show loading state
+      const loadingId = addMessage("Reasoning...", "bot");
+
+      try {
+        // 1. Call Agent
+        const agentResponse = await fetch(AGENT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: message })
+        });
+        const responseData = await agentResponse.json();
+
+        // Extract reasoning and command
+        const reasoning = responseData.reasoning || "No reasoning provided.";
+        const command = responseData.command;
+
+        console.log("Agent Reasoning:", reasoning);
+        console.log("Agent Command:", command);
+
+        // Update the "Reasoning..." message with actual reasoning
+        updateMessage(loadingId, `
+                <details style="margin-bottom: 10px;">
+                    <summary style="cursor: pointer; font-weight: bold; color: #007bff;">Show Agent Reasoning</summary>
+                    <div style="margin-top: 5px; color: #555; white-space: pre-wrap; font-style: italic; border-left: 2px solid #ddd; padding-left: 10px;">${reasoning}</div>
+                </details>
+            `);
+
+        if (command.error) {
+          addMessage(`<strong>Error:</strong> ${command.error}`, "bot");
+          return;
+        }
+
+        if (command.action === "UNKNOWN") {
+          addMessage(command.message, "bot");
+          return;
+        }
+
+        // 2. Call Mock Backend based on Command
+        await executeCommand(command);
+
+      } catch (error) {
+        console.error(error);
+        addMessage("Error: " + error.message, "bot");
+      }
+    }
+
+    async function executeCommand(command) {
+      let endpoint = "";
+      let body = command.payload;
+
+      if (command.action === "CALL_AGGREGATES_API") {
+        endpoint = "/location-aggregate/v1/location-aggregates";
+      } else if (command.action === "CALL_ASSETS_API") {
+        endpoint = "/store-list/v1/retail-assets";
+      } else {
+        addMessage("Unknown action received.", "bot");
+        return;
+      }
+
+      const backendLoadingId = addMessage("Calling Backend API...", "bot");
+
+      try {
+        const response = await fetch(BACKEND_URL + endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const result = await response.json();
+        console.log("Backend Response:", result);
+
+        if (command.action === "CALL_ASSETS_API") {
+          // Handle Zip Response
+          updateMessage(backendLoadingId, "Backend responded. Decoding Zip...");
+          if (result.data) {
+            await handleZipResponse(result.data);
+          } else {
+            addMessage("No data received.", "bot");
+          }
+        } else {
+          // Handle JSON Response (Aggregates)
+          updateMessage(backendLoadingId, "Backend responded with Stats.");
+          displayAggregates(result.data);
+        }
+
+      } catch (error) {
+        console.error(error);
+        updateMessage(backendLoadingId, "Failed to call backend.");
+      }
+    }
+
+    async function handleZipResponse(base64Data) {
+      try {
+        const zip = new JSZip();
+        const zipContent = await zip.loadAsync(base64Data, { base64: true });
+
+        // Assume we look for any .json file
+        const fileNames = Object.keys(zipContent.files);
+        const jsonFile = fileNames.find(name => name.endsWith(".json"));
+
+        if (jsonFile) {
+          const content = await zipContent.files[jsonFile].async("string");
+          const jsonData = JSON.parse(content);
+          displayAssets(jsonData);
+        } else {
+          addMessage("No JSON file found in the zip.", "bot");
+        }
+      } catch (err) {
+        addMessage("Error extracting zip: " + err.message, "bot");
+      }
+    }
+
+    function displayAggregates(data) {
+      let html = `<strong>Location:</strong> ${data.locationType} ${data.locationId || ''}<br>`;
+      html += `<strong>Population:</strong> ${data.demographics.population}<br>`;
+      html += `<strong>Households:</strong> ${data.demographics.households}<br>`;
+      html += `<strong>Store Count:</strong> ${data.storeNetwork.count}`;
+      addMessage(html, "bot");
+    }
+
+    function displayAssets(data) {
+      const stores = data.stores || data.data || []; // Handle various structures
+      let count = stores.length;
+      let html = `<strong>Found ${count} assets from Zip.</strong><br>`;
+      if (count > 0) {
+        html += "Top 3:<br>";
+        stores.slice(0, 3).forEach(store => {
+          html += `- ${store.storeName} (${store.assetCategory})<br>`;
+        });
+      }
+      addMessage(html, "bot");
+    }
+
+    function addMessage(text, sender) {
+      const div = document.createElement("div");
+      div.className = `message ${sender}-message`;
+      div.innerHTML = text; // Allow HTML
+      div.id = "msg_" + new Date().getTime();
+      document.getElementById("chatMessages").appendChild(div);
+      div.scrollIntoView({ behavior: "smooth" });
+      return div.id;
+    }
+
+    function updateMessage(id, text) {
+      const div = document.getElementById(id);
+      if (div) {
+        div.innerHTML = text;
+      }
+    }
+  </script>
+
+</body>
+
+</html>
