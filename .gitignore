@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+
+# Node/Frontend (if you add node_modules later)
+node_modules/
+npm-debug.log
+
+# Build/Dist
+RetailVista_Release.zip

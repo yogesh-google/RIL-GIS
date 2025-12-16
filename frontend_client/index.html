@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en" ng-app="retailVistaApp">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RetailVista Assistant (Production Client)</title>
+    <!-- AngularJS -->
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+    <!-- JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f4f9; display: flex; height: 100vh; margin: 0; overflow: hidden; }
+        .container { display: flex; width: 100%; height: 100%; }
+        
+        /* Chat Section */
+        .chat-section { width: 400px; display: flex; flex-direction: column; border-right: 1px solid #ddd; background: white; z-index: 10; box-shadow: 2px 0 5px rgba(0,0,0,0.05); }
+        .chat-header { background: #007bff; color: white; padding: 15px; font-weight: bold; text-align: center; }
+        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { padding: 10px 15px; border-radius: 10px; max-width: 90%; word-wrap: break-word; position: relative; font-size: 0.95em; }
+        .user-message { background: #e3f2fd; align-self: flex-end; color: #333; }
+        .bot-message { background: #f1f0f0; align-self: flex-start; color: #333; }
+        .input-area { display: flex; padding: 15px; background: #fafafa; border-top: 1px solid #ddd; }
+        .input-area input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; outline: none; }
+        .input-area button { margin-left: 10px; padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 20px; cursor: pointer; }
+        .input-area button:hover { background: #0056b3; }
+        
+        /* Thinking/Reasoning */
+        .reasoning-box { font-size: 0.85em; color: #666; margin-bottom: 5px; border-left: 3px solid #6c757d; padding-left: 10px; background: #f8f9fa; padding: 8px; border-radius: 0 4px 4px 0; }
+        details summary { cursor: pointer; color: #6c757d; font-weight: bold; font-size: 0.8em; margin-bottom: 2px; }
+        
+        /* Visualizer Section */
+        .visualizer-section { flex: 1; padding: 20px; overflow-y: auto; background: #f4f6f8; display: flex; flex-direction: column; }
+        .viz-header { font-size: 1.2em; font-weight: bold; margin-bottom: 15px; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .viz-content { flex: 1; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); padding: 20px; position: relative; }
+        
+        /* Visuals (Mock Maps etc) */
+        .mock-map { width: 100%; height: 100%; background: #e9ecef; border-radius: 4px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .map-pin { position: absolute; width: 10px; height: 10px; background: red; border-radius: 50%; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
+        .map-label { position: absolute; font-size: 1.5em; color: #888; font-weight: bold; }
+        
+        .json-dump pre { background: #2d2d2d; color: #76ff03; padding: 15px; border-radius: 5px; overflow: auto; max-height: 500px; font-size: 0.9em; }
+    </style>
+</head>
+<body ng-controller="ChatController">
+
+<div class="container">
+    <!-- Chat Side -->
+    <div class="chat-section">
+        <div class="chat-header">RetailVista Assistant</div>
+        <div class="chat-messages" id="chatMessages">
+            <div ng-repeat="msg in messages" class="message" ng-class="{'user-message': msg.sender=='user', 'bot-message': msg.sender=='bot'}">
+                <span ng-if="!msg.type && !msg.isHtml">{{ msg.text }}</span>
+                <div ng-if="!msg.type && msg.isHtml" ng-bind-html="msg.text"></div>
+                
+                <div ng-if="msg.type == 'agent-response'">
+                    <details ng-if="msg.reasoning && msg.reasoning !== 'No reasoning provided.'">
+                        <summary>Thinking Process...</summary>
+                        <div class="reasoning-box">{{ msg.reasoning }}</div>
+                    </details>
+                    <div ng-if="msg.friendlyText" style="margin-top:5px;">{{ msg.friendlyText }}</div>
+                </div>
+            </div>
+            <div ng-if="processing" class="message bot-message" style="font-style: italic; color: #888;">
+                Thinking...
+            </div>
+        </div>
+        <div class="input-area">
+            <form ng-submit="sendMessage()" style="display:flex; width:100%;">
+                <input type="text" ng-model="userInput" placeholder="Ask me something..." ng-disabled="processing">
+                <button type="submit" ng-disabled="processing || !userInput.trim()">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Visualizer Side -->
+    <div class="visualizer-section">
+        <div class="viz-header">Live Dashboard View</div>
+        <div class="viz-content" id="vizContent">
+            <div ng-if="!dashboardData" style="text-align: center; color: #999; margin-top: 50px;">
+                <h3>Dashboard Ready</h3>
+                <p>Waiting for Agent Events...</p>
+            </div>
+
+            <div ng-if="dashboardData">
+                <div ng-if="dashboardData.type === 'MAP'" class="mock-map">
+                    <span class="map-label">{{ dashboardData.title }}</span>
+                    <div ng-repeat="pin in dashboardData.points" class="map-pin" 
+                         ng-style="{'left': pin.x + '%', 'top': pin.y + '%'}"
+                         title="{{pin.name}}"></div>
+                </div>
+
+                <div ng-if="dashboardData.type === 'STATS'" style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div ng-repeat="(key, val) in dashboardData.stats" style="background: #f8f9fa; padding: 20px; border-radius: 8px; min-width: 150px; text-align: center; border: 1px solid #dee2e6;">
+                        <div style="font-size: 0.9em; color: #666; text-transform: uppercase;">{{key}}</div>
+                        <div style="font-size: 1.8em; font-weight: bold; color: #007bff;">{{val}}</div>
+                    </div>
+                </div>
+
+                <div ng-if="dashboardData.type === 'JSON'" class="json-dump">
+                    <div ng-bind-html="dashboardData.content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
