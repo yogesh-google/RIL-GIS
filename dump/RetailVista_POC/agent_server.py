@@ -204,8 +204,6 @@ async def chat(request: ChatRequest):
 
              # Cleanup Markdown
              json_str = json_str.replace("```json", "").replace("```", "").strip()
-             # Cleanup potential "result" wrapper if it's strictly {result: "..."} which is invalid JSON usually but maybe valid if quoted
-             # If the string starts with {result: ... we might need to be careful.
              
              command_json = json.loads(json_str)
              
